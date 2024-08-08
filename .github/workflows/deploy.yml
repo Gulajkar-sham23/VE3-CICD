@@ -1,0 +1,53 @@
+
+---
+    name: Build and Push multistage Docker Image to AWS ECR
+    on:
+      push:
+        branches: [ main ]
+    jobs:
+      build-and-push:
+        name: Build and Push to ECR
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout
+          uses: actions/checkout@v2
+    
+        - name: Configure AWS credentials
+          uses: aws-actions/configure-aws-credentials@v1
+          with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: us-east-1
+    
+        - name: Login to Amazon ECR
+          id: login-ecr
+          uses: aws-actions/amazon-ecr-login@v1
+    
+    
+        - name: Build, Tag, and Push the Image to Amazon ECR
+          id: build-image
+          env:
+            ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+            ECR_REPOSITORY: php-application
+            IMAGE_TAG: php-app
+          run: |
+            docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+            docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+    
+        - name: Deploy to ECS
+          run: |
+              aws ecs update-service --cluster php-app-cluster --service php-app-service --force-new-deployment --region ${{ secrets.AWS_REGION }}
+    
+        - name: Run Integration Tests
+          run: |
+              # Wait for a few seconds to allow the new deployment to start
+              sleep 30
+              # Run integration tests against the deployed service
+              curl -f http://<app-url> || exit 1
+    
+        - name: Rollback Deployment on Failure
+          if: failure()
+          run: |
+              # Rollback to the previous stable deployment
+              aws ecs update-service --cluster php-app-cluster --service php-app-service --force-new-deployment --region ${{ secrets.AWS_REGION }} --desired-count 0
+    
